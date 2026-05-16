@@ -5,11 +5,16 @@ import json
 from websockets.asyncio.client import connect
 from kafka import KafkaProducer
 
-COIN_PAIR = os.getenv('COIN_PAIR', 'btcusdt')
+COIN_PAIRS_JSON = os.getenv('COIN_PAIRS', '["btcusdt"]')
 DATA_TYPE = os.getenv('DATA_TYPE', '@trade')
-WEBSOCKET_STREAM_URL = f'wss://stream.binance.com:9443/ws/{COIN_PAIR}{DATA_TYPE}' # "wss://stream.binance.com:9443/ws/btcusdt@trade
-
 KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'trades')
+ROWS_LIMIT = 100
+
+pairs = json.loads(COIN_PAIRS_JSON)
+streams = [f"{pair.strip().lower()}{DATA_TYPE}" for pair in pairs]
+streams_path = '/'.join(streams)
+
+WEBSOCKET_STREAM_URL = f'wss://stream.binance.com:9443/stream?streams={streams_path}'
 
 FIELD_MAPPING = {
     '@trade': {
@@ -25,20 +30,20 @@ FIELD_MAPPING = {
         'event_time': 'E',
         'price': 'c',
         'price_change_percent': 'P',
-        'high': 'h',
-        'low': 'l', 
+        'high_price': 'h',
+        'low_price': 'l', 
         'volume': 'v', 
     },
     '@kline_1m': {
         'symbol': 's',
-        'event_time': 't',
+        'start_time': 't',
         'open_price': 'o',
-        'high': 'h',
-        'low': 'l',
+        'high_price': 'h',
+        'low_price': 'l',
         'close_price': 'c',
         'volume': 'v',
         'taker_buy_volume': 'V',
-        'kline_closed': 'x'        
+        'is_closed': 'x'        
     }
 }
 
@@ -53,7 +58,12 @@ async def produce():
         while True:
             message = await websocket.recv()
             
-            tx = json.loads(message)
+            raw_data = json.loads(message)
+
+            tx = raw_data.get('data')
+
+            if not tx:
+                continue
 
             if DATA_TYPE == '@kline_1m':
                 tx = tx['k']
@@ -63,12 +73,12 @@ async def produce():
             temp_tx = {}
 
             for key, value in current_map.items():
-                temp_tx[key] = tx[value]
+                temp_tx[key] = tx.get(value)
             
             print(temp_tx)
             producer.send(KAFKA_TOPIC, value = temp_tx)
             no_trades += 1
-            if no_trades == 10:
+            if no_trades == ROWS_LIMIT:
                 producer.flush()
                 producer.close()
                 break
