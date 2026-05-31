@@ -1,21 +1,68 @@
-# Projekt RTA - Analiza Strumieniowa Binance
+# Projekt RTA – Instrukcja uruchomienia
 
-Projekt realizuje przetwarzanie w czasie rzeczywistym danych z giełdy Binance (transakcje oraz świece 1-minutowe) przy użyciu Apache Kafka oraz PySpark Structured Streaming. Wyniki analizy (wskaźnik VWAP oraz detekcja anomalii wolumenu Z-score) są zapisywane do lokalnej bazy danych SQLite.
+Aby uruchomić środowisko od zera i uniknąć konfliktów danych, wykonaj poniższe kroki w podanej kolejności.
 
-## Architektura
-
-* **Źródło:** Binance WebSocket API
-* **Broker:** Apache Kafka (tematy: `trades`, `klines`, `alerts`)
-* **Przetwarzanie:** PySpark (wersja 3.5.0 / 4.0.0-preview2)
-* **Baza docelowa:** SQLite (`rta.db`)
-
-## Instrukcja uruchomienia (Czysty start)
-
-Aby uniknąć błędów związanych z niekompatybilnością schematów po modyfikacjach kodu, zaleca się uruchamianie środowiska od nowa, usuwając historyczne punkty przywracania.
-
-### Krok 1: Zatrzymanie obecnego środowiska
+## Krok 1: Zatrzymanie obecnego środowiska
 
 W głównym katalogu projektu wyłącz działające kontenery:
 
 ```bash
 docker compose down
+```
+
+## Krok 2: Usunięcie starych stanów i bazy danych
+
+Usuń pliki checkpointów Sparka oraz stary plik bazy danych, aby system zaczął rejestrować historię od zera:
+
+```bash
+rm -rf /tmp/checkpoints/zscore
+rm -rf /tmp/checkpoints/vwap_1min
+rm -rf /tmp/checkpoints/vwap_5min
+rm -f rta.db
+```
+
+## Krok 3: Uruchomienie infrastruktury
+
+Uruchom usługi (m.in. Kafka) w tle:
+
+```bash
+docker compose up -d
+```
+
+## Krok 4: Uruchomienie producenta danych
+
+W jednym oknie terminala uruchom skrypt integrujący oba strumienie danych (`trades` oraz `klines`):
+
+```bash
+python producer_binance.py
+```
+
+## Krok 5: Uruchomienie analizy PySpark
+
+W dwóch osobnych terminalach uruchom aplikacje analityczne.
+
+### Terminal A (VWAP)
+
+```bash
+python spark_vwap.py
+```
+
+### Terminal B (Z-score)
+
+```bash
+python spark_zscore.py
+```
+
+## Wskazówki
+
+### Logi
+
+W terminalu producenta zobaczysz logi przesyłanych komunikatów.
+
+### Baza danych
+
+Plik `rta.db` zostanie automatycznie utworzony w katalogu, z którego uruchamiasz skrypty, w momencie pierwszego zapisu batcha.
+
+### Stabilność
+
+Z-score wymaga zebrania historii (okno 10 minut), dlatego pełną precyzję statystyczną osiągnie po krótkim czasie od uruchomienia.
