@@ -1,0 +1,133 @@
+services:
+  # KAFKA (bez Zookeepera - tryb KRaft)
+  broker:
+    image: confluentinc/cp-kafka:7.8.0
+    hostname: broker
+    container_name: broker_1
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker:9093'
+      KAFKA_LISTENERS: 'PLAINTEXT://broker:9092,CONTROLLER://broker:9093,PLAINTEXT_HOST://0.0.0.0:29092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://broker:9092,PLAINTEXT_HOST://localhost:29092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAME: 'CONTROLLER'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+  # # JUPYTER + SPARK
+  # jupyter:
+  #   build: .
+  #   container_name: jupyter_1
+  #   depends_on:
+  #     - broker
+  #     - redis
+  #   environment:
+  #     - JUPYTER_TOKEN=""
+  #     - JUPYTER_PASSWORD=""
+  #   command: start-notebook.sh --NotebookApp.token='' --NotebookApp.password=''
+  #   volumes:
+  #     - ./notebooks:/home/jovyan/notebooks
+  #   ports:
+  #     - "7000:8888"
+  #     - "4040:4040"
+  #     - "8501:8501"
+
+  # REDIS (Lekka baza NoSQL)
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis_1
+    ports:
+      - "6379:6379"
+
+  producer-binance:
+    build: .
+    container_name: producer_binance_1
+    depends_on:
+      - broker
+    volumes:
+      - ./notebooks:/home/jovyan/notebooks
+    command: >
+      bash -c "sleep 15 && 
+               cd /home/jovyan/notebooks/projekt && 
+               python producer_binance.py"
+
+  spark-vwap:
+    build: .
+    container_name: spark_vwap_1
+    depends_on:
+      - broker
+      - producer-binance
+    volumes:
+      - ./notebooks:/home/jovyan/notebooks
+    command: >
+      bash -c "sleep 20 && 
+               cd /home/jovyan/notebooks/projekt && 
+               spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.0-preview2 spark_vwap.py"
+  
+  spark-zscore:
+    build: .
+    container_name: spark_zscore_1
+    depends_on:
+      - broker
+      - producer-binance
+    volumes:
+      - ./notebooks:/home/jovyan/notebooks
+    command: >
+      bash -c "sleep 20 && 
+               cd /home/jovyan/notebooks/projekt && 
+               spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.0-preview2 spark_zscore.py"
+
+  ml-api:
+    build: .
+    container_name: ml_api_1
+    depends_on:
+      - broker
+    volumes:
+      - ./notebooks:/home/jovyan/notebooks
+    ports:
+      - "8000:8000"
+    command: >
+      bash -c "sleep 22 && 
+               cd /home/jovyan/notebooks/projekt && 
+               PORT=8000 python api.py"
+
+  ml-consumer:
+    build: .
+    container_name: ml_consumer_1
+    depends_on:
+      - ml-api
+    volumes:
+      - ./notebooks:/home/jovyan/notebooks
+    environment:
+      - KAFKA_BOOTSTRAP=broker:9092
+      - SOURCE_TOPIC=klines
+      - ALERTS_TOPIC=alerts
+      - API_URL=http://ml-api:8000/predict
+    command: >
+      bash -c "sleep 25 && 
+               cd /home/jovyan/notebooks/projekt && 
+               python consumer_predict.py"
+
+  
+  dashboard:
+    build: .
+    container_name: dashboard_1
+    depends_on:
+      - broker
+      - spark-vwap
+      - ml-consumer
+    volumes:
+      - ./notebooks:/home/jovyan/notebooks
+    ports:
+      - "8501:8501"
+    command: >
+      bash -c "sleep 35 && 
+               cd /home/jovyan/notebooks/projekt && 
+               streamlit run dashboard.py --server.port=8501 --server.address=0.0.0.0"
